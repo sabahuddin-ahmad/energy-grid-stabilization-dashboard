@@ -527,12 +527,12 @@ def describe_scope(context: Optional[dict]) -> str:
     if country == "Canada":
         if region and region != "All":
             return f"{region}, Canada"
-        return "Canada (All Provinces)"
+        return "Canada"
 
     if country == "All":
         if region and region != "All":
             return region
-        return "Global Overview"
+        return "Global"
 
     if region and region != "All":
         return f"{region}, {country}"
@@ -618,7 +618,7 @@ def build_detail_panel(
     if show_hint:
         info_blocks.append(
             html.Div(
-                "Latest snapshot (click the chart to explore specific days)",
+                "Click on the plot to explore specific forecasting information.",
                 style={
                     "fontSize": "20px",
                     "color": "#8FA9B5",
