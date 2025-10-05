@@ -1,13 +1,11 @@
 # Step 1: Import necessary libraries
 from pathlib import Path
 from typing import Optional
-
 import pandas as pd
 from dash import Dash, html, dcc, Output, Input, State
 import plotly.express as px
 
-mapbox_access_token = "pk.eyJ1IjoicGxvdGx5bWFwYm94IiwiYSI6ImNrOWJqb2F4djBnMjEzbG50amg0dnJieG4ifQ.Zme1-Uzoi75IaFbieBDl3A"
-
+# mapbox_access_token = "pk.eyJ1IjoicGxvdGx5bWFwYm94IiwiYSI6ImNrOWJqb2F4djBnMjEzbG50amg0dnJieG4ifQ.Zme1-Uzoi75IaFbieBDl3A"
 
 COUNTRY_REGION_CITY_DATA = {
     "Canada": {
@@ -128,7 +126,7 @@ COUNTRY_OPTIONS = (
     ]
 )
 
-px.set_mapbox_access_token(mapbox_access_token)
+# px.set_mapbox_access_token(mapbox_access_token)
 
 
 def get_region_options(country: str):
@@ -240,6 +238,7 @@ demand_columns = [col for col in ("Market Demand", "Ontario Demand") if col in d
 if not demand_columns:
     raise ValueError("Expected demand columns ('Market Demand', 'Ontario Demand') not found in dataset.")
 
+
 daily_demand = (
     df.groupby("Date", as_index=False)[demand_columns]
     .mean()
@@ -274,12 +273,19 @@ fig.update_layout(
 fig.update_traces(line=dict(width=3))
 
 # Step 4: Initialize the Dash App
-app = Dash(__name__)
+app = Dash(
+    __name__,
+    meta_tags=[
+        {"name": "viewport", "content": "width=device-width, initial-scale=1.0"}
+    ],
+)
+app.title = "GridSense"
+server = app.server
 
 # Step 5: Define the App Layout
 # The layout defines the structure of your dashboard.
 # It uses HTML components (html.Div, html.H1, etc.) and Dash Core Components (dcc.Graph).
-app.layout = html.Div(children=[
+app.layout = html.Div(id="root", children=[
     html.H1(
         children=[
             "GridSense",
@@ -288,14 +294,17 @@ app.layout = html.Div(children=[
                 style={
                     'font-size': '0.6em',
                     'margin-left': '0.5rem',
-                    'font-weight': 'normal'
+                    'margin-top': '1.5rem',
+                    'font-weight': 'normal',
+                    'fontStyle': 'italic'
                 },
             ),
             html.Img(
                 src='/assets/QuanTech.png',
                 style={
                     'width': '220px',
-                    'margin-left': '0.5rem',
+                    'margin-left': '0.8rem',
+                    'margin-bottom': '1.2rem',
                     'background': 'transparent'
                 },
             ),
@@ -304,19 +313,21 @@ app.layout = html.Div(children=[
             'textAlign': 'center',
             'font-size': 40,
             'padding': '40px 10px 40px 10px',
-            'color': '#FFFFFF',
+            'color': "#FFFFFF",
             'fontFamily': 'sans-serif',
             'display': 'flex',
             'justify-content': 'center',
             'align-items': 'center',
             'margin': '0 auto',
-            'gap': '0.5rem'
+            'gap': '0.5rem',
+            'fontWeight': 'bold'
+            
         },
     ),
     
-    html.Div(children='''
-        Daily electricity demand derived from PUB_Demand_2025_v275.csv.
-    '''),
+    # html.Div(children='''
+    #     Daily electricity demand derived from PUB_Demand_2025_v275.csv.
+    # '''),
 
     html.Div(
         [
@@ -368,7 +379,7 @@ app.layout = html.Div(children=[
                     ),
                     html.P(
                         "Drag the map or zoom to explore anywhere in the world.",
-                        style={'color': '#EEEEEE', 'fontSize': '0.9rem'}
+                        style={'color': '#EEEEEE', 'fontSize': '1.5rem'}
                     ),
                 ],
                 style={
@@ -395,7 +406,7 @@ app.layout = html.Div(children=[
         id='demand-line-chart',
         figure=fig
     )
-], style={"background-color": "#000000", 'padding': '10px 10px 10px 10px'})
+], style={"background-color": "#001821", 'padding': '10px 10px 10px 10px'})
 
 
 
