@@ -1,6 +1,6 @@
 # Step 1: Import necessary libraries
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 import pandas as pd
 from dash import Dash, html, dcc, Output, Input, State
 import plotly.graph_objects as go
@@ -93,6 +93,8 @@ COUNTRY_OPTIONS = (
     ]
 )
 
+GRID_CAPACITY_VALUE = 17500.0
+
 def get_region_options(country: str):
     if country == "All":
         regions = MAP_LOCATIONS_DF["Region"].unique()
@@ -144,7 +146,12 @@ def build_map_figure(
 
     center_lat = filtered["Latitude"].mean()
     center_lon = filtered["Longitude"].mean()
-    zoom = 1.8 if (country == "All" or not country) else 4.0
+    if country == "All" or not country:
+        zoom = 1.8
+    elif region and region != "All":
+        zoom = 5.4
+    else:
+        zoom = 4.2
 
     fig.update_layout(
         mapbox=dict(
@@ -210,7 +217,7 @@ def standardize_prediction_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
         if error_column in df.columns:
             df[error_column] = pd.to_numeric(df[error_column], errors="coerce")
 
-    base_date = pd.Timestamp("2025-01-01")
+    base_date = pd.Timestamp("2014-01-01")
     weeks_offset = pd.to_numeric(df["timestamp"], errors="coerce")
     if weeks_offset.notna().any():
         timedelta_offset = pd.to_timedelta(weeks_offset, unit="W", errors="coerce")
@@ -284,6 +291,18 @@ def load_region_dataframe(country: str, region: Optional[str]) -> pd.DataFrame:
                 except Exception:
                     continue
 
+        ontario_folder = PROVINCE_FOLDERS.get("Ontario")
+        if ontario_folder and ontario_folder.exists():
+            csv_candidates = sorted(ontario_folder.glob("*.csv"))
+            for csv_path in reversed(csv_candidates):
+                try:
+                    region_raw = pd.read_csv(csv_path, encoding="utf-8-sig")
+                    region_df = standardize_prediction_dataframe(region_raw)
+                    if not region_df.empty:
+                        return region_df
+                except Exception:
+                    continue
+
     return BASE_DEMAND_DF.copy()
 
 
@@ -298,6 +317,7 @@ def prepare_daily_demand(country: str, region: Optional[str]) -> pd.DataFrame:
     dataset["Date"] = dataset["time_axis"]
     dataset["Load"] = dataset["y_true"]
     dataset["Prediction"] = dataset["y_pred"]
+    dataset["Grid Capacity"] = GRID_CAPACITY_VALUE
 
     return dataset
 
@@ -311,6 +331,16 @@ def build_demand_figure(daily: pd.DataFrame) -> go.Figure:
             paper_bgcolor="#000000",
             plot_bgcolor="#000000",
             font=dict(color="#FFFFFF"),
+            xaxis=dict(
+                gridcolor="#333333",
+                zerolinecolor="#555555",
+                title="Time (year)",
+                type="date",
+                tickformat="%Y",
+                dtick="M12",
+                ticklabelmode="period",
+            ),
+            yaxis=dict(gridcolor="#333333", zerolinecolor="#555555", title="Load (MW)"),
             margin=dict(l=40, r=40, t=60, b=40),
         )
         return fig
@@ -409,7 +439,85 @@ def build_demand_figure(daily: pd.DataFrame) -> go.Figure:
         plot_bgcolor="#000000",
         font=dict(color="#FFFFFF"),
         legend=dict(bgcolor="rgba(0,0,0,0.4)", font=dict(color="#FFFFFF")),
-        xaxis=dict(gridcolor="#333333", zerolinecolor="#555555", title="Timestamp"),
+        xaxis=dict(
+            gridcolor="#333333",
+            zerolinecolor="#555555",
+            title="Time (year)",
+            type="date",
+            tickformat="%Y",
+            dtick="M12",
+            ticklabelmode="period",
+        ),
+        yaxis=dict(gridcolor="#333333", zerolinecolor="#555555", title="Load (MW)"),
+        margin=dict(l=40, r=40, t=60, b=40),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor="#021F2C", font=dict(color="#FFFFFF")),
+    )
+
+    return fig
+
+
+def build_prediction_figure(daily: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+
+    if daily.empty:
+        fig.update_layout(
+            title="Predicted Load Forecast",
+            paper_bgcolor="#000000",
+            plot_bgcolor="#000000",
+            font=dict(color="#FFFFFF"),
+            xaxis=dict(
+                gridcolor="#333333",
+                zerolinecolor="#555555",
+                title="Time (year)",
+                type="date",
+                tickformat="%Y",
+                dtick="M12",
+                ticklabelmode="period",
+            ),
+            yaxis=dict(gridcolor="#333333", zerolinecolor="#555555", title="Load (MW)"),
+            margin=dict(l=40, r=40, t=60, b=40),
+        )
+        return fig
+
+    fig.add_trace(
+        go.Scatter(
+            x=daily["time_axis"],
+            y=daily["Prediction"],
+            mode="lines+markers",
+            line=dict(color="#F39C12", width=2),
+            marker=dict(size=6, color="#F39C12"),
+            name="Predicted Load",
+            hovertemplate="Timestamp: %{x|%Y-%m-%d}<br>Prediction: %{y:,.0f} MW<extra></extra>",
+        )
+    )
+
+    current_capacity = GRID_CAPACITY_VALUE
+    fig.add_hline(
+        y=current_capacity,
+        line=dict(color="#00B5FF", width=2, dash="dot"),
+        annotation=dict(
+            text=f"Grid Capacity {current_capacity:,.0f} MW",
+            font=dict(color="#FFFFFF"),
+            bgcolor="rgba(0,0,0,0.5)",
+        ),
+    )
+
+    fig.update_layout(
+        title="Predicted Load Forecast",
+        paper_bgcolor="#000000",
+        plot_bgcolor="#000000",
+        font=dict(color="#FFFFFF"),
+        legend=dict(bgcolor="rgba(0,0,0,0.4)", font=dict(color="#FFFFFF")),
+        xaxis=dict(
+            gridcolor="#333333",
+            zerolinecolor="#555555",
+            title="Time (year)",
+            type="date",
+            tickformat="%Y",
+            dtick="M12",
+            ticklabelmode="period",
+        ),
         yaxis=dict(gridcolor="#333333", zerolinecolor="#555555", title="Load (MW)"),
         margin=dict(l=40, r=40, t=60, b=40),
         hovermode="x unified",
@@ -444,33 +552,46 @@ def describe_scope(context: Optional[dict]) -> str:
 
 def build_detail_panel(
     daily: pd.DataFrame, click_data: Optional[dict], context: Optional[dict]
-) -> html.Div:
+) -> Tuple[html.Div, str]:
     scope_label = describe_scope(context)
 
     if daily.empty:
-        return html.Div(
-            f"No demand data available for {scope_label}.",
-            style={
-                "color": "#FFFFFF",
-                "textAlign": "center",
-                "fontSize": "24px",
-                "fontWeight": "600",
-                "marginTop": "16px",
-            },
+        message = f"No demand data available for {scope_label}."
+        return (
+            html.Div(
+                message,
+                style={
+                    "color": "#FFFFFF",
+                    "textAlign": "center",
+                    "fontSize": "24px",
+                    "fontWeight": "600",
+                    "marginTop": "16px",
+                },
+            ),
+            "No recommendation available.",
         )
 
     daily = daily.copy()
     if "time_axis" not in daily.columns:
-        return html.Div(
-            "Timestamp information is missing from the dataset.",
-            style={
-                "color": "#FFFFFF",
-                "textAlign": "center",
-                "fontSize": "24px",
-                "fontWeight": "600",
-                "marginTop": "16px",
-            },
+        message = "Timestamp information is missing from the dataset."
+        return (
+            html.Div(
+                message,
+                style={
+                    "color": "#FFFFFF",
+                    "textAlign": "center",
+                    "fontSize": "24px",
+                    "fontWeight": "600",
+                    "marginTop": "16px",
+                },
+            ),
+            "No recommendation available.",
         )
+
+    if daily["time_axis"].dtype == object:
+        parsed_axis = pd.to_datetime(daily["time_axis"], errors="coerce")
+        if parsed_axis.notna().any():
+            daily["time_axis"] = parsed_axis
 
     time_series = daily["time_axis"]
     is_datetime_axis = pd.api.types.is_datetime64_any_dtype(time_series)
@@ -508,38 +629,48 @@ def build_detail_panel(
 
     row = daily.loc[target_idx]
 
-    actual_value = row.get("y_true", float("nan"))
     prediction_value = row.get("y_pred", float("nan"))
-    signed_error = row.get("error")
-    if pd.isna(signed_error):
-        if pd.notna(actual_value) and pd.notna(prediction_value):
-            signed_error = prediction_value - actual_value
-    absolute_error = row.get("abs_error")
-    if pd.isna(absolute_error) and pd.notna(signed_error):
-        absolute_error = abs(signed_error)
+    grid_capacity_value = GRID_CAPACITY_VALUE
 
-    set_label = str(row.get("set", "unknown")).title()
-
-    def format_timestamp(value, fallback: str = "Unknown timestamp") -> str:
+    def format_timestamp(value, fallback: str = "Unknown date") -> str:
         if isinstance(value, pd.Timestamp):
-            return value.strftime("%B %d, %Y %H:%M")
+            return value.strftime("%B %d, %Y")
         if pd.isna(value):
             return fallback
+        try:
+            parsed = pd.to_datetime(value, errors="coerce")
+            if isinstance(parsed, pd.Timestamp) and not pd.isna(parsed):
+                return parsed.strftime("%B %d, %Y")
+        except Exception:
+            pass
         return str(value)
 
-    timestamp_text = row.get("timestamp_label")
-    if not timestamp_text or timestamp_text == "unknown":
-        timestamp_text = format_timestamp(row.get("time_axis"))
+    timestamp_text = format_timestamp(row.get("time_axis"))
+
+    if pd.notna(prediction_value):
+        capacity_difference = grid_capacity_value - prediction_value
+    else:
+        capacity_difference = float("nan")
+
+    if pd.notna(capacity_difference):
+        if capacity_difference >= 0:
+            status_text = f"Surplus: {capacity_difference:+,.0f} MW"
+            status_color = "#2ECC71"
+            recommendation_text = "There is a surplus. Please transfer the surplus energy to storage."
+            recommendation_color = "#2ECC71"
+        else:
+            status_text = f"Deficit: {capacity_difference:+,.0f} MW"
+            status_color = "#E74C3C"
+            recommendation_text = "Grid Upgrade Required!"
+            recommendation_color = "#E74C3C"
+    else:
+        status_text = "Load unavailable"
+        status_color = "#BDC3C7"
+        recommendation_text = "No recommendation available."
+        recommendation_color = "#BDC3C7"
 
     def format_value(value):
-        return f"{value:,.0f} MW" if pd.notna(value) else "—"
-
-    if pd.isna(signed_error):
-        status_text = "Prediction error unavailable"
-        status_color = "#BDC3C7"
-    else:
-        status_text = "Overprediction" if signed_error >= 0 else "Underprediction"
-        status_color = "#E67E22" if signed_error >= 0 else "#3498DB"
+        return f"{value:,.0f}" if pd.notna(value) else "—"
 
     info_blocks = [
         html.Div(
@@ -566,29 +697,24 @@ def build_detail_panel(
             )
         )
 
+    def format_measure(value):
+        formatted = format_value(value)
+        return formatted if formatted == "—" else f"{formatted} MW"
+
     info_blocks.extend(
         [
             html.Div(
                 timestamp_text,
                 style={
-                    "fontSize": "38px",
+                    "fontSize": "36px",
                     "fontWeight": "700",
                     "letterSpacing": "0.04em",
                 },
             ),
             html.Div(
-                f"{set_label}",
-                style={
-                    "fontSize": "20px",
-                    "fontWeight": "600",
-                    "color": "#FFFFFF",
-                    "marginTop": "8px",
-                },
-            ),
-            html.Div(
                 [
                     html.Div(
-                        "Actual Load",
+                        "Predicted Load (MW)",
                         style={
                             "fontSize": "18px",
                             "color": "#8FA9B5",
@@ -596,11 +722,11 @@ def build_detail_panel(
                         },
                     ),
                     html.Div(
-                        format_value(actual_value),
+                        format_measure(prediction_value),
                         style={
                             "fontSize": "30px",
                             "fontWeight": "600",
-                            "color": "#00B5FF",
+                            "color": "#F39C12",
                         },
                     ),
                 ],
@@ -609,7 +735,7 @@ def build_detail_panel(
             html.Div(
                 [
                     html.Div(
-                        "Model Prediction",
+                        "Grid Capacity (MW)",
                         style={
                             "fontSize": "18px",
                             "color": "#8FA9B5",
@@ -617,11 +743,11 @@ def build_detail_panel(
                         },
                     ),
                     html.Div(
-                        format_value(prediction_value),
+                        format_measure(grid_capacity_value),
                         style={
                             "fontSize": "30px",
                             "fontWeight": "600",
-                            "color": "#F39C12",
+                            "color": "#00B5FF",
                         },
                     ),
                 ],
@@ -637,33 +763,18 @@ def build_detail_panel(
                 },
             ),
             html.Div(
-                (
-                    f"Signed Error: {signed_error:+,.0f} MW"
-                    if pd.notna(signed_error)
-                    else "Signed Error: —"
-                ),
+                recommendation_text,
                 style={
                     "fontSize": "18px",
-                    "color": "#8FA9B5",
-                    "marginTop": "6px",
-                },
-            ),
-            html.Div(
-                (
-                    f"Absolute Error: {absolute_error:,.0f} MW"
-                    if pd.notna(absolute_error)
-                    else "Absolute Error: —"
-                ),
-                style={
-                    "fontSize": "18px",
-                    "color": "#8FA9B5",
-                    "marginTop": "4px",
+                    "color": recommendation_color,
+                    "marginTop": "8px",
+                    "textAlign": "center",
                 },
             ),
         ]
     )
 
-    return html.Div(
+    detail_component = html.Div(
         info_blocks,
         style={
             "display": "flex",
@@ -672,11 +783,16 @@ def build_detail_panel(
         },
     )
 
+    return detail_component, recommendation_text
+
 
 INITIAL_DAILY = prepare_daily_demand("Canada", "All")
 INITIAL_CONTEXT = {"country": "Canada", "region": "All"}
-INITIAL_FIGURE = build_demand_figure(INITIAL_DAILY)
-INITIAL_DETAILS = build_detail_panel(INITIAL_DAILY, None, INITIAL_CONTEXT)
+# INITIAL_FIGURE = build_demand_figure(INITIAL_DAILY)
+INITIAL_PREDICTION_FIG = build_prediction_figure(INITIAL_DAILY)
+INITIAL_DETAILS, INITIAL_RECOMMENDATION = build_detail_panel(
+    INITIAL_DAILY, None, INITIAL_CONTEXT
+)
 INITIAL_DAILY_EXPORT = INITIAL_DAILY.copy()
 if not INITIAL_DAILY_EXPORT.empty and "Date" in INITIAL_DAILY_EXPORT.columns:
     date_series = INITIAL_DAILY_EXPORT["Date"]
@@ -684,6 +800,12 @@ if not INITIAL_DAILY_EXPORT.empty and "Date" in INITIAL_DAILY_EXPORT.columns:
         INITIAL_DAILY_EXPORT["Date"] = date_series.dt.strftime("%Y-%m-%d %H:%M")
     else:
         INITIAL_DAILY_EXPORT["Date"] = date_series.astype(str)
+if not INITIAL_DAILY_EXPORT.empty and "time_axis" in INITIAL_DAILY_EXPORT.columns:
+    time_series = INITIAL_DAILY_EXPORT["time_axis"]
+    if pd.api.types.is_datetime64_any_dtype(time_series):
+        INITIAL_DAILY_EXPORT["time_axis"] = time_series.dt.strftime("%Y-%m-%d %H:%M")
+    else:
+        INITIAL_DAILY_EXPORT["time_axis"] = time_series.astype(str)
 
 # Step 4: Initialize the Dash App
 app = Dash(
@@ -794,7 +916,7 @@ app.layout = html.Div(
                                 ),
                                 html.P(
                                     "Drag the map or zoom to explore anywhere in the world.",
-                                    style={"color": "#EEEEEE", "fontSize": "1.2rem"},
+                                    style={"color": "#EEEEEE", "fontSize": "1.5rem"},
                                 ),
                             ],
                             style={
@@ -817,9 +939,15 @@ app.layout = html.Div(
                         "marginTop": "30px",
                     },
                 ),
+                # dcc.Graph(
+                #     id="demand-line-chart",
+                #     figure=INITIAL_FIGURE,
+                #     config={"displayModeBar": False},
+                #     style={"marginTop": "32px"},
+                # ),
                 dcc.Graph(
-                    id="demand-line-chart",
-                    figure=INITIAL_FIGURE,
+                    id="predicted-load-chart",
+                    figure=INITIAL_PREDICTION_FIG,
                     config={"displayModeBar": False},
                     style={"marginTop": "32px"},
                 ),
@@ -844,7 +972,8 @@ app.layout = html.Div(
                         ),
                         dcc.Textarea(
                             id="recommendations-box",
-                            placeholder="Capture operational recommendations, mitigation steps, or notes here...",
+                            placeholder="...",
+                            value=INITIAL_RECOMMENDATION,
                             style={
                                 "width": "100%",
                                 "height": "180px",
@@ -868,7 +997,10 @@ app.layout = html.Div(
 
 
 @app.callback(
-    [Output("demand-line-chart", "figure"), Output("daily-demand-store", "data")],
+    [
+        Output("predicted-load-chart", "figure"),
+        Output("daily-demand-store", "data"),
+    ],
     Input("country-dropdown", "value"),
     Input("region-dropdown", "value"),
 )
@@ -876,7 +1008,7 @@ def update_demand_chart(country_value, region_value):
     normalized_region = normalize_region_value(region_value)
     country_scope = country_value or "All"
     daily = prepare_daily_demand(country_scope, normalized_region)
-    figure = build_demand_figure(daily)
+    prediction_figure = build_prediction_figure(daily)
     daily_export = daily.copy()
     if not daily_export.empty and "Date" in daily_export.columns:
         date_series = daily_export["Date"]
@@ -884,6 +1016,12 @@ def update_demand_chart(country_value, region_value):
             daily_export["Date"] = date_series.dt.strftime("%Y-%m-%d %H:%M")
         else:
             daily_export["Date"] = date_series.astype(str)
+    if not daily_export.empty and "time_axis" in daily_export.columns:
+        time_series = daily_export["time_axis"]
+        if pd.api.types.is_datetime64_any_dtype(time_series):
+            daily_export["time_axis"] = time_series.dt.strftime("%Y-%m-%d %H:%M")
+        else:
+            daily_export["time_axis"] = time_series.astype(str)
     store_payload = {
         "daily": daily_export.to_dict("records"),
         "context": {
@@ -891,7 +1029,7 @@ def update_demand_chart(country_value, region_value):
             "region": normalized_region,
         },
     }
-    return figure, store_payload
+    return prediction_figure, store_payload
 
 
 @app.callback(
@@ -926,10 +1064,13 @@ def update_map_figure(country_value, region_value):
 
 @app.callback(
     Output("market-click-details", "children"),
-    Input("demand-line-chart", "clickData"),
+    Output("recommendations-box", "value"),
+    Input("predicted-load-chart", "clickData"),
     Input("daily-demand-store", "data"),
 )
-def update_market_details(click_data, daily_data):
+def update_market_details(prediction_click, daily_data):
+    click_data = prediction_click
+
     if isinstance(daily_data, dict):
         daily_records = daily_data.get("daily", [])
         context = daily_data.get("context")
@@ -941,7 +1082,9 @@ def update_market_details(click_data, daily_data):
     if not daily_df.empty and "Date" in daily_df.columns:
         daily_df["Date"] = pd.to_datetime(daily_df["Date"], errors="coerce")
 
-    return build_detail_panel(daily_df, click_data, context)
+    detail_panel, recommendation_text = build_detail_panel(daily_df, click_data, context)
+
+    return detail_panel, recommendation_text
 
 
 # Step 6: Run the Dashboard
